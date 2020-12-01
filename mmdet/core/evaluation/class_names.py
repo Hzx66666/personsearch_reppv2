@@ -80,7 +80,10 @@ def coco_classes():
         'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase',
         'scissors', 'teddy_bear', 'hair_drier', 'toothbrush'
     ]
-
+def psdb_classes():
+    return [
+        'person'
+    ]
 
 def cityscapes_classes():
     return [
@@ -95,7 +98,8 @@ dataset_aliases = {
     'imagenet_vid': ['vid', 'imagenet_vid', 'ilsvrc_vid'],
     'coco': ['coco', 'mscoco', 'ms_coco'],
     'wider_face': ['WIDERFaceDataset', 'wider_face', 'WDIERFace'],
-    'cityscapes': ['cityscapes']
+    'cityscapes': ['cityscapes'],
+    'psdb':['psdb']
 }
 
 
