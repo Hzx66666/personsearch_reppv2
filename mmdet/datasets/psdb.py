@@ -3,6 +3,7 @@ import logging
 import os.path as osp
 import tempfile
 import json
+import pickle
 import mmcv
 import numpy as np
 from mmcv.utils import print_log
@@ -167,7 +168,7 @@ class PsdbDataset(CustomDataset):
 
         return ann
 
-    def xyxy2xywh(self, bbox):
+    def xyxy2xywh(self, _bbox):
         """Convert ``xyxy`` style bounding boxes to ``xywh`` style for COCO
         evaluation.
 
@@ -179,7 +180,6 @@ class PsdbDataset(CustomDataset):
             list[float]: The converted bounding boxes, in ``xywh`` order.
         """
 
-        _bbox = bbox.tolist()
         return [
             _bbox[0],
             _bbox[1],
@@ -392,7 +392,7 @@ class PsdbDataset(CustomDataset):
             ious = np.zeros((num_gt, num_det), dtype=np.float32)
             for i in range(num_gt):
                 for j in range(num_det):
-                    ious[i, j] = self._compute_iou(gt_boxes[i], det[j, :4])
+                    ious[i, j] = self._compute_iou(gt_boxes[i,:4], det[j, :4])
             tfmat = (ious >= iou_thresh)
 
             # for each det, keep only the largest iou of all the gt
@@ -423,34 +423,65 @@ class PsdbDataset(CustomDataset):
 
         print('  ap = ',ap)
         print('  recall = {:.2%}'.format(det_rate))
+    
+    def gen_reidpkl(self,gt_boxes, det_boxes, imganns, det_thresh=0.5):
+        result = []
+        gpids=[]
+        for key in gt_boxes.keys():
+            gt = np.asarray(gt_boxes[key])
+            inds = np.where(gt[:, 4].ravel() !=-1)[0]
+            gpids+=gt[inds].tolist()
+            if key not in det_boxes.keys():
+                result.append(dict(im_name='s'+str(key)+'.jpg',
+                                gt_box_num=gt.shape[0],
+                                det_box_num=0,
+                                gt_boxes=gt[:, :4],
+                                det_boxes=[],
+                                det_scores=[],
+                                gt_pids=gt[:, 4],
+                                det_ious=[],
+                                det_pids=[],
+                                im_size=(
+                                    imganns['s'+str(key)]['height'], imganns['s'+str(key)]['width'])
+                                ))
+                continue
+            det = np.asarray(det_boxes[key])
+            inds = np.where(det[:, 4].ravel() >= det_thresh)[0]
+            det = det[inds]
+            num_gt = gt.shape[0]
+            num_det = det.shape[0]
+            det_pids = -np.ones(num_det,dtype=np.int32)
+            det_ious = np.zeros(num_det)
+            ious = np.zeros((num_gt, num_det), dtype=np.float32)
+            for i in range(num_gt):
+                for j in range(num_det):
+                    ious[i, j] = self._compute_iou(gt[i, :4], det[j, :4])
+            for j in range(num_det):
+                largest_ind = np.argmax(ious[:, j])
+                if ious[largest_ind][j] != 0:
+                    det_ious[j] = ious[largest_ind][j]
+                    det_pids[j] = gt[largest_ind][4]
+            result.append(dict(im_name='s'+str(key)+'.jpg',
+                            gt_box_num=num_gt,
+                            det_box_num=num_det,
+                            gt_boxes=gt[:, :4],
+                            det_boxes=det[:, :4],
+                            det_scores=det[:, 4],
+                            gt_pids=gt[:, 4],
+                            det_ious=det_ious,
+                            det_pids=det_pids,
+                            im_size=(
+                                    imganns['s'+str(key)]['height'], imganns['s'+str(key)]['width'])
+                            ))
+        with open('./result_pkl/test.pkl', 'wb') as pkf:
+            pickle.dump(result, pkf)
 
+    
     def evaluate(self,
                  results,
                  metric='bbox',
                  jsonfile_prefix=None,
                  ):
-        """Evaluation in COCO protocol.
-
-        Args:
-            results (list[list | tuple]): Testing results of the dataset.
-            metric (str | list[str]): Metrics to be evaluated. Options are
-                'bbox', 'segm', 'proposal', 'proposal_fast'.
-            logger (logging.Logger | str | None): Logger used for printing
-                related information during evaluation. Default: None.
-            jsonfile_prefix (str | None): The prefix of json files. It includes
-                the file path and the prefix of filename, e.g., "a/b/prefix".
-                If not specified, a temp file will be created. Default: None.
-            classwise (bool): Whether to evaluating the AP for each class.
-            proposal_nums (Sequence[int]): Proposal number used for evaluating
-                recalls, such as recall@100, recall@1000.
-                Default: (100, 300, 1000).
-            iou_thrs (Sequence[float]): IoU threshold used for evaluating
-                recalls. If set to a list, the average recall of all IoUs will
-                also be computed. Default: 0.5.
-
-        Returns:
-            dict[str, float]: COCO style evaluation metric.
-        """
         metrics = metric if isinstance(metric, list) else [metric]
         allowed_metrics = ['bbox', 'segm', 'proposal', 'proposal_fast']
         for metric in metrics:
@@ -460,31 +491,32 @@ class PsdbDataset(CustomDataset):
         result_files, tmp_dir = self.format_results(results, jsonfile_prefix)
         eval_results = {}
         cocoGt = self.coco
+        f=open('./cocoGt.json','w')
+        json.dump(cocoGt.anns,f)
         cocoDt=cocoGt.loadRes(result_files['bbox'])
-
+        f=open('./cocoDt.json','w')
+        json.dump(cocoDt.anns,f)
         gt_boxes={}
         det_boxes={}
         for anns in cocoGt.anns.values():
             ids= int(anns['image_id'][1:])
             if ids not in gt_boxes.keys():
-                gt_boxes[ids]=[anns['bbox']]
+                gt_boxes[ids]=[anns['bbox']+[anns['pid']]]
             else:
-                gt_boxes[ids].append(anns['bbox'])
+                gt_boxes[ids].append(anns['bbox']+[anns['pid']])
         for anns in cocoDt.anns.values():
             ids= int(anns['image_id'][1:])
             if ids not in det_boxes.keys():
-                det_boxes[ids]=[anns['bbox']+[anns['score']]]
+                det_boxes[ids]=[anns['bbox']]
             else:
-                det_boxes[ids].append(anns['bbox']+[anns['score']])
+                det_boxes[ids].append(anns['bbox'])
         for key in gt_boxes.keys():
             for x in range(len(gt_boxes[key])):
-                gt_boxes[key][x]=self.xywh2xyxy(gt_boxes[key][x])
-        '''
-        f=open('./cocoGt.json','w')
-        json.dump(gt_boxes,f)
-        f=open('./cocoDt.json','w')
-        json.dump(det_boxes,f)
-        '''
+                pid = int(gt_boxes[key][x][4])
+                gt_boxes[key][x] = self.xywh2xyxy(
+                    gt_boxes[key][x][:4])
+                gt_boxes[key][x].append(pid)
+        self.gen_reidpkl(gt_boxes,det_boxes,cocoGt.imgs)
         gt_boxes=list(gt_boxes.items())
         det_boxes=list(det_boxes.items())
         gt_boxes.sort(key=lambda x:x[0],reverse=False)
@@ -497,7 +529,63 @@ class PsdbDataset(CustomDataset):
                 det_boxes.pop()
         gt_boxes=[x[1] for x in gt_boxes]
         det_boxes=[x[1] for x in det_boxes]
-        #print(ddgt_boxes)
-        #print(dddet_boxes)
         self.evaluate_detections(gt_boxes,det_boxes)
         return eval_results
+    def evaluate2(self,
+                 results,
+                 metric='bbox',
+                 jsonfile_prefix=None,
+                 ):
+        metrics = metric if isinstance(metric, list) else [metric]
+        allowed_metrics = ['bbox', 'segm', 'proposal', 'proposal_fast']
+        for metric in metrics:
+            if metric not in allowed_metrics:
+                raise KeyError(f'metric {metric} is not supported')
+
+        result_files, tmp_dir = self.format_results(results, jsonfile_prefix)
+        eval_results = {}
+        cocoGt = self.coco
+        f=open('./cocoGt.json','w')
+        json.dump(cocoGt.anns,f)
+        cocoDt=cocoGt.loadRes(result_files['bbox'])
+        f=open('./cocoDt.json','w')
+        json.dump(cocoDt.anns,f)
+        f=open('./image.json','w')
+        json.dump(cocoGt.imgs,f)
+        gt_boxes={}
+        det_boxes={}
+        for anns in cocoGt.anns.values():
+            ids= int(anns['image_id'][1:])
+            if ids not in gt_boxes.keys():
+                gt_boxes[ids]=[anns['bbox']+[anns['pid']]]
+            else:
+                gt_boxes[ids].append(anns['bbox']+[anns['pid']])
+        for anns in cocoDt.anns.values():
+            ids= int(anns['image_id'][1:])
+            if ids not in det_boxes.keys():
+                det_boxes[ids]=[anns['bbox']]
+            else:
+                det_boxes[ids].append(anns['bbox'])
+        for key in gt_boxes.keys():
+            for x in range(len(gt_boxes[key])):
+                pid = int(gt_boxes[key][x][4])
+                gt_boxes[key][x] = self.xywh2xyxy(
+                    gt_boxes[key][x][:4])
+                gt_boxes[key][x].append(pid)
+        self.gen_reidpkl(gt_boxes,det_boxes,cocoGt.imgs)
+        gt_boxes=list(gt_boxes.items())
+        det_boxes=list(det_boxes.items())
+        gt_boxes.sort(key=lambda x:x[0],reverse=False)
+        det_boxes.sort(key=lambda x:x[0],reverse=False)
+        for x in range(len(self)-len(det_boxes)):
+            det_boxes.append((-1,[[0,0,0,0,0]]))
+        for x in range(len(self)):
+            if gt_boxes[x][0]!=det_boxes[x][0]:
+                det_boxes.insert(x,(gt_boxes[x][0],[[0,0,0,0,0]]))
+                det_boxes.pop()
+        gt_boxes=[x[1] for x in gt_boxes]
+        det_boxes=[x[1] for x in det_boxes]
+        self.evaluate_detections(gt_boxes,det_boxes)
+        return eval_results
+    
+    

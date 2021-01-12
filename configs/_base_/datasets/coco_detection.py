@@ -1,5 +1,5 @@
 dataset_type = 'PsdbDataset'
-data_root = 'data/converted_psdb/'
+data_root = 'data/converted_PRW/'
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
 train_pipeline = [
@@ -37,8 +37,8 @@ data = dict(
         pipeline=train_pipeline),
     val=dict(
         type=dataset_type,
-        ann_file=data_root + 'annotations/converted_test.json',
-        img_prefix=data_root + 'test/',
+        ann_file=data_root + 'annotations/converted_train.json',
+        img_prefix=data_root + 'train/',
         pipeline=test_pipeline),
     test=dict(
         type=dataset_type,
