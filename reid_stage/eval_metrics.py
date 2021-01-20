@@ -151,7 +151,7 @@ def evaluate_search_psdb(q_feat, q_pids, g_feat, g_pids, g_imnames, g_ious, iou_
 
     return accs[0]
 
-def evaluate_search_prw(q_feat, q_pids, g_feat, g_pids, g_imnames, g_ious, iou_thresh=0.5, gallery_size=100):
+def evaluate_search_prw(q_feat, q_pids, g_feat, g_pids, g_imnames, g_ious, iou_thresh=0.5):
     with open('/data/hzx/converted_PRW/annotations/converted_test.json','r') as gtfile:
         infos=json.load(gtfile)
         img_id_name=infos['images']
